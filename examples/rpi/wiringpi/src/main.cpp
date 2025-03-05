@@ -20,12 +20,24 @@ int main(int argc, char** argv)
                 (bool)atoi(argv[4]) ? logs::level::debug : logs::level::info;
             auto sequence = std::views::iota(0, number);
 
+            using namespace gpio::rpi::wpi;
             auto logif = logs::Factory::create<logs::console::Log>(loglvl);
-            std::ranges::for_each(sequence, [logif](
-                                                [[maybe_unused]] uint8_t num) {
-                using namespace gpio::rpi::wiringpi;
-                auto iface = gpio::Factory::create<Gpio, config_t>({"", logif});
-            });
+            auto iface = gpio::Factory::create<Gpio, config_t>(
+                {modetype::input, {16, 28}, logif});
+
+            iface->read(16, Observer<gpio::GpioData>::create(
+                                [](const gpio::GpioData& data) {
+                                    std::cout << "Pin: " << std::get<0>(data)
+                                              << ", val: " << std::get<1>(data)
+                                              << std::endl;
+                                }));
+
+            // std::ranges::for_each(
+            //     sequence, [logif]([[maybe_unused]] uint8_t num) {
+            //         using namespace gpio::rpi::wpi;
+            //         auto iface = gpio::Factory::create<Gpio, config_t>(
+            //             {modetype::input, {27, 28}, logif});
+            //     });
 
             // group->moveto(pospct);
             // std::cout << "Moving to servo position: "

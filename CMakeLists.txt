@@ -23,4 +23,6 @@ add_dependencies(${PROJECT_NAME} liblogger)
 
 target_link_libraries(${PROJECT_NAME}
     logger
+    ${WIRINGPI_LIBRARIES}
+    ${CMAKE_THREAD_LIBS_INIT}
 )
