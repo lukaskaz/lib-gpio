@@ -1,0 +1,87 @@
+name: Check build/run/tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+      # as by default
+      types: [opened, synchronize, reopened]
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+    - name: Checking out
+      uses: actions/checkout@v4
+    - name: Setting up dependencies
+      run: |
+        git clone https://github.com/WiringPi/WiringPi.git
+        cd WiringPi && ./build debian && mv debian-template/wiringpi*.deb .
+        sudo apt install ./wiringpi*.deb
+    - name: Building target app
+      run: |
+        mkdir build && cd build && cmake .. && make
+      
+  execution:
+    name: Execution
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+    - name: Checking out
+      uses: actions/checkout@v4
+    - name: Setting up dependencies
+      run: |
+        git clone https://github.com/WiringPi/WiringPi.git
+        cd WiringPi && ./build debian && mv debian-template/wiringpi*.deb .
+        sudo apt install ./wiringpi*.deb
+    - name: Preparing binary
+      run: |
+        mkdir build && cd build && cmake -DADD_EXAMPLES=ON .. && make
+    - name: Executing example programs
+      run: |
+        ./build/examples/rpi/native/prog
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    environment: test
+
+    steps:
+    - name: Checking out
+      uses: actions/checkout@v4
+    - name: Setting up dependencies
+      run: |
+        git clone https://github.com/WiringPi/WiringPi.git
+        cd WiringPi && ./build debian && mv debian-template/wiringpi*.deb .
+        sudo apt install ./wiringpi*.deb
+    - name: Building tests
+      run: |
+        cd tests && mkdir build && cd build && cmake .. && make
+    - name: Running tests
+      run: |
+        ctest --output-on-failure --test-dir tests/build/
+
+  tests-coverage:
+    name: Coverage
+    if: false
+    needs: [test]
+    runs-on: ubuntu-latest
+    environment: test
+
+    steps:
+    - name: Checking out
+      uses: actions/checkout@v4
+    - name: Setting up
+      run: |
+        sudo apt install lcov
+    - name: Preparing tests
+      run: |
+        cd tests && mkdir build && cd build && cmake .. && make
+    - name: Running coverage checker
+      run: |
+        cd tests && ./scripts/check-coverage.sh

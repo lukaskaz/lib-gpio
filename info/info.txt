@@ -1,0 +1,4 @@
+dtoverlay=pwm,pin=12,func=4
+dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
+dtoverlay=i2c-pwm-pca9685a,addr=0x40
+
