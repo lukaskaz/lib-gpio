@@ -54,7 +54,7 @@ int main(int argc, char** argv)
                 ifacewrite->toggle(22);
                 getchar();
 
-                std::cout << "First scenario DONE -> releasing gpio\n";
+                std::cout << "Second scenario DONE -> releasing gpio\n";
             }
         }
     }
