@@ -1,9 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
 
-find_package(Threads REQUIRED)
-find_library(WIRINGPI_LIBRARIES NAMES wiringPi)
-include_directories(${WIRINGPI_INCLUDE_DIRS})
-
 include(ExternalProject)
 
 set(source_dir "${CMAKE_BINARY_DIR}/liblogger-src")

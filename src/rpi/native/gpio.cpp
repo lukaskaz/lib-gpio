@@ -1,17 +1,11 @@
-#include "gpio/interfaces/rpi/wiringpi/gpio.hpp"
+#include "gpio/interfaces/rpi/native/gpio.hpp"
 
-#include <asm/ioctl.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/gpio.h>
 #include <poll.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <unistd.h>
-// #include <wiringPi.h> // torem
 
 #include <chrono>
 #include <filesystem>
@@ -22,7 +16,7 @@
 #include <sstream>
 #include <unordered_map>
 
-namespace gpio::rpi::wpi
+namespace gpio::rpi::native
 {
 
 using namespace std::chrono_literals;
@@ -135,6 +129,8 @@ struct Gpio::Handler
 
   private:
     const std::shared_ptr<logs::LogIf> logif;
+    // Chip 0 on older Pi models, chip 4 on Pi 5
+    const std::filesystem::path gpiochippath{"/dev/gpiochip4"};
     const modetype mode;
     class InputPin : public Observable<GpioData>
     {
@@ -148,6 +144,7 @@ struct Gpio::Handler
         }
         ~InputPin()
         {
+            deinitialize();
             handler->log(logs::level::info,
                          "Removed input pin: " + std::to_string(pin));
         }
@@ -175,7 +172,7 @@ struct Gpio::Handler
             return true;
         }
 
-      public:
+      private:
         const Gpio::Handler* handler;
         const int32_t pin;
         const std::chrono::milliseconds signaldelay{500ms};
@@ -193,6 +190,7 @@ struct Gpio::Handler
             req.eventflags = GPIOEVENT_REQUEST_FALLING_EDGE;
             req.handleflags =
                 GPIOHANDLE_REQUEST_INPUT | GPIOHANDLE_REQUEST_BIAS_PULL_DOWN;
+            strcpy(req.consumer_label, "rpi_input");
             // switch (mode)
             // {
             //     case INT_EDGE_SETUP:
@@ -208,19 +206,18 @@ struct Gpio::Handler
             //         break;
             // }
 
-            // Chip 0 on older Pi models, chip 4 on Pi 5
-            std::filesystem::path gpiochippath{"/dev/gpiochip4"};
-            auto ifs = fopen(gpiochippath.c_str(), "r");
+            auto ifs = fopen(handler->gpiochippath.c_str(), "r");
             if (!ifs)
                 throw std::runtime_error(
-                    "Cannot open gpio chip file for input: " +
-                    gpiochippath.native());
+                    "Cannot open gpio chip file for input pin: " +
+                    handler->gpiochippath.native());
 
             if (ioctl(fileno(ifs), GPIO_GET_LINEEVENT_IOCTL, &req) != 0)
                 throw std::runtime_error(
-                    "Cannot initialize pin " + std::to_string(pin) +
+                    "Cannot initialize input pin " + std::to_string(pin) +
                     " due to ioctl error: " + strerror(errno));
 
+            fclose(ifs);
             fd = req.fd;
             handler->log(logs::level::debug,
                          "Obtained input pin[" + std::to_string(pin) +
@@ -230,9 +227,14 @@ struct Gpio::Handler
             flags |= O_NONBLOCK;
             if (fcntl(fd, F_SETFL, flags) < 0)
                 throw std::runtime_error(
-                    "Cannot initialize pin " + std::to_string(pin) +
+                    "Cannot initialize input pin " + std::to_string(pin) +
                     " due to fcntl error: " + strerror(errno));
 
+            return true;
+        }
+
+        bool deinitialize()
+        {
             return true;
         }
 
@@ -331,20 +333,25 @@ struct Gpio::Handler
         OutputPin(Gpio::Handler* handler, int32_t pin) :
             handler{handler}, pin{pin}
         {
-            // pinMode(pin, OUTPUT);
+            initialize();
             handler->log(logs::level::info,
                          "Created output pin: " + std::to_string(pin));
         }
         ~OutputPin()
         {
-            // pinMode(pin, OUTPUT);
+            deinitialize();
             handler->log(logs::level::info,
                          "Removed output pin: " + std::to_string(pin));
         }
 
         bool set()
         {
-            // digitalWrite(pin, 1);
+            struct gpiohandle_data data;
+            data.values[0] = 1;
+            if (ioctl(fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data) != 0)
+                throw std::runtime_error(
+                    "Cannot set output pin " + std::to_string(pin) +
+                    " due to ioctl error: " + strerror(errno));
             handler->log(logs::level::debug,
                          "Pin[" + std::to_string(pin) + "] set");
             return true;
@@ -352,7 +359,12 @@ struct Gpio::Handler
 
         bool clear()
         {
-            // digitalWrite(pin, 0);
+            struct gpiohandle_data data;
+            data.values[0] = 0;
+            if (ioctl(fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data) != 0)
+                throw std::runtime_error(
+                    "Cannot set output pin " + std::to_string(pin) +
+                    " due to ioctl error: " + strerror(errno));
             handler->log(logs::level::debug,
                          "Pin[" + std::to_string(pin) + "] cleared");
             return true;
@@ -360,7 +372,13 @@ struct Gpio::Handler
 
         bool toggle()
         {
-            // digitalWrite(pin, !digitalRead(pin));
+            struct gpiohandle_data data;
+            if (ioctl(fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &data) != 0)
+                throw std::runtime_error(
+                    "Cannot set output pin " + std::to_string(pin) +
+                    " due to ioctl error: " + strerror(errno));
+
+            data.values[0] ? clear() : set();
             handler->log(logs::level::debug,
                          "Pin[" + std::to_string(pin) + "] toggled");
             return true;
@@ -369,6 +387,50 @@ struct Gpio::Handler
       private:
         const Gpio::Handler* handler;
         const int32_t pin;
+        int32_t fd;
+
+        bool initialize()
+        {
+            struct gpiohandle_request req;
+            req.lineoffsets[0] = pin;
+            req.flags =
+                GPIOHANDLE_REQUEST_OUTPUT | GPIOHANDLE_REQUEST_BIAS_PULL_DOWN;
+            req.lines = 1;
+            req.default_values[0] = 0;
+            strcpy(req.consumer_label, "rpi_output");
+
+            auto ifs = fopen(handler->gpiochippath.c_str(), "r");
+            if (!ifs)
+                throw std::runtime_error(
+                    "Cannot open gpio chip file for output pin: " +
+                    handler->gpiochippath.native());
+
+            if (ioctl(fileno(ifs), GPIO_GET_LINEHANDLE_IOCTL, &req) != 0)
+                throw std::runtime_error(
+                    "Cannot initialize output pin " + std::to_string(pin) +
+                    " due to ioctl error: " + strerror(errno));
+
+            fclose(ifs);
+            fd = req.fd;
+            handler->log(logs::level::debug,
+                         "Obtained output pin[" + std::to_string(pin) +
+                             "] file descriptor " + std::to_string(fd));
+
+            auto flags = fcntl(fd, F_GETFL);
+            flags |= O_NONBLOCK;
+            if (fcntl(fd, F_SETFL, flags) < 0)
+                throw std::runtime_error(
+                    "Cannot initialize output pin " + std::to_string(pin) +
+                    " due to fcntl error: " + strerror(errno));
+
+            return true;
+        }
+
+        bool deinitialize()
+        {
+            clear();
+            return true;
+        }
     };
     std::unordered_map<int32_t, InputPin> inputs;
     std::unordered_map<int32_t, OutputPin> outputs;
@@ -416,4 +478,4 @@ bool Gpio::toggle(int32_t pin)
     return handler->toggle(pin);
 }
 
-} // namespace gpio::rpi::wpi
+} // namespace gpio::rpi::native

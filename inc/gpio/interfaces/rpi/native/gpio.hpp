@@ -9,7 +9,7 @@
 #include <tuple>
 #include <vector>
 
-namespace gpio::rpi::wpi
+namespace gpio::rpi::native
 {
 
 enum class modetype
@@ -39,4 +39,4 @@ class Gpio : public GpioIf
     std::unique_ptr<Handler> handler;
 };
 
-} // namespace gpio::rpi::wpi
+} // namespace gpio::rpi::native

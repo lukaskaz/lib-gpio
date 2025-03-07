@@ -8,5 +8,5 @@ if(POLICY CMP0002)
 endif()
 
 if(ADD_EXAMPLES)
-    add_subdirectory(rpi/wiringpi)
+    add_subdirectory(rpi/native)
 endif()
