@@ -23,38 +23,18 @@ int main(int argc, char** argv)
             using namespace gpio::rpi::wpi;
             auto logif = logs::Factory::create<logs::console::Log>(loglvl);
             auto iface = gpio::Factory::create<Gpio, config_t>(
-                {modetype::input, {16, 28}, logif});
+                {modetype::input, {16, 21}, logif});
 
-            iface->read(16, Observer<gpio::GpioData>::create(
-                                [](const gpio::GpioData& data) {
-                                    std::cout << "Pin: " << std::get<0>(data)
-                                              << ", val: " << std::get<1>(data)
-                                              << std::endl;
-                                }));
+            auto readingfunc = Observer<gpio::GpioData>::create(
+                [](const gpio::GpioData& data) {
+                    std::cout << "Pin: " << std::get<0>(data)
+                              << ", val: " << std::get<1>(data) << std::endl;
+                });
+            iface->read(16, readingfunc);
+            iface->read(21, readingfunc);
+            getchar();
 
-            // std::ranges::for_each(
-            //     sequence, [logif]([[maybe_unused]] uint8_t num) {
-            //         using namespace gpio::rpi::wpi;
-            //         auto iface = gpio::Factory::create<Gpio, config_t>(
-            //             {modetype::input, {27, 28}, logif});
-            //     });
-
-            // group->moveto(pospct);
-            // std::cout << "Moving to servo position: "
-            //           << std::quoted(std::to_string(pospct))
-            //           << "[%]\nPress [enter]" << std::flush;
-            // getchar();
-
-            // group->movestart();
-            // std::cout << "Moving to servo position: " << std::quoted("START")
-            //           << "\nPress [enter]" << std::flush;
-            // getchar();
-
-            // group->moveend();
-            // std::cout << "Moving to servo position: " << std::quoted("END")
-            //           << "\nPress [enter]" << std::flush;
-            // getchar();
-
+            iface->unread(16, readingfunc);
             std::cout << "First scenario DONE -> releasing gpio\n";
         }
     }

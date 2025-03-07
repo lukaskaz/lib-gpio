@@ -31,9 +31,15 @@ template <typename T>
 class Observable
 {
   public:
-    void notify(const T& param)
+    bool notify(const T& param)
     {
-        std::ranges::for_each(observers, [&param](auto obs) { (*obs)(param); });
+        if (!observers.empty())
+        {
+            std::ranges::for_each(observers,
+                                  [&param](auto obs) { (*obs)(param); });
+            return true;
+        }
+        return false;
     }
 
     void subscribe(std::shared_ptr<Observer<T>> obs)
