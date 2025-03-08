@@ -36,10 +36,10 @@ int main(int argc, char** argv)
             }
 
             {
-                std::cout
-                    << "Second scenario -> testing gpio output operation\n";
+                std::cout << "Second scenario -> testing gpio normal output "
+                             "operation\n";
                 auto ifacewrite = gpio::Factory::create<Gpio, config_t>(
-                    {modetype::output, {17, 22}, logif});
+                    {modetype::output_normal, {17, 22}, logif});
 
                 ifacewrite->write(17, 1);
                 ifacewrite->write(22, 0);
@@ -55,6 +55,28 @@ int main(int argc, char** argv)
                 getchar();
 
                 std::cout << "Second scenario DONE -> releasing gpio\n";
+            }
+
+            {
+                std::cout << "Third scenario -> testing gpio inverted output "
+                             "operation\n";
+                auto ifacewrite = gpio::Factory::create<Gpio, config_t>(
+                    {modetype::output_inverted, {17, 22}, logif});
+
+                ifacewrite->write(17, 1);
+                ifacewrite->write(22, 0);
+                getchar();
+                ifacewrite->write(17, 0);
+                ifacewrite->write(22, 1);
+                getchar();
+                ifacewrite->toggle(17);
+                ifacewrite->toggle(22);
+                getchar();
+                ifacewrite->toggle(17);
+                ifacewrite->toggle(22);
+                getchar();
+
+                std::cout << "Third scenario DONE -> releasing gpio\n";
             }
         }
     }
