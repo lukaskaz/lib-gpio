@@ -15,7 +15,8 @@ namespace gpio::rpi::native
 enum class modetype
 {
     input,
-    output,
+    output_normal,
+    output_inverted,
     tristate
 };
 

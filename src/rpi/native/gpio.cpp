@@ -51,10 +51,13 @@ struct Gpio::Handler
                     catch (const std::exception& ex)
                     {
                         log(logs::level::error, ex.what());
+                        throw;
                     }
                 });
                 break;
-            case modetype::output:
+            case modetype::output_normal:
+                [[fallthrough]];
+            case modetype::output_inverted:
                 std::ranges::for_each(pins, [this](auto pin) {
                     outputs.try_emplace(pin, this, pin);
                 });
@@ -74,7 +77,9 @@ struct Gpio::Handler
             case modetype::input:
                 log(logs::level::info, "Input pins operation ended");
                 break;
-            case modetype::output:
+            case modetype::output_normal:
+                [[fallthrough]];
+            case modetype::output_inverted:
                 log(logs::level::info, "Output pins operation ended");
             case modetype::tristate:
                 // yet not supported
@@ -187,24 +192,12 @@ struct Gpio::Handler
             req.lineoffset = pin;
             req.handleflags = GPIOHANDLE_REQUEST_INPUT;
             // req.eventflags = GPIOEVENT_REQUEST_BOTH_EDGES;
+            // req.eventflags = GPIOEVENT_REQUEST_RISING_EDGE;
+            // req.eventflags = GPIOEVENT_REQUEST_FALLING_EDGE;
             req.eventflags = GPIOEVENT_REQUEST_FALLING_EDGE;
             req.handleflags =
                 GPIOHANDLE_REQUEST_INPUT | GPIOHANDLE_REQUEST_BIAS_PULL_DOWN;
             strcpy(req.consumer_label, "rpi_input");
-            // switch (mode)
-            // {
-            //     case INT_EDGE_SETUP:
-            //         return -1;
-            //     case INT_EDGE_FALLING:
-            //         req.eventflags = GPIOEVENT_REQUEST_FALLING_EDGE;
-            //         break;
-            //     case INT_EDGE_RISING:
-            //         req.eventflags = GPIOEVENT_REQUEST_RISING_EDGE;
-            //         break;
-            //     case INT_EDGE_BOTH:
-            //         req.eventflags = GPIOEVENT_REQUEST_BOTH_EDGES;
-            //         break;
-            // }
 
             auto ifs = fopen(handler->gpiochippath.c_str(), "r");
             if (!ifs)
@@ -235,6 +228,7 @@ struct Gpio::Handler
 
         bool deinitialize()
         {
+            close(fd);
             return true;
         }
 
@@ -331,54 +325,43 @@ struct Gpio::Handler
     {
       public:
         OutputPin(Gpio::Handler* handler, int32_t pin) :
-            handler{handler}, pin{pin}
+            handler{handler}, low{[this] {
+                return (uint8_t)(isnormal() ? 0 : 1);
+            }()},
+            high{!low}, pin{pin}
         {
             initialize();
             handler->log(logs::level::info,
-                         "Created output pin: " + std::to_string(pin));
+                         "Created output pin: " + std::to_string(pin) +
+                             ", type: " + (isnormal() ? "normal" : "inverted"));
         }
         ~OutputPin()
         {
             deinitialize();
             handler->log(logs::level::info,
-                         "Removed output pin: " + std::to_string(pin));
+                         "Removed output pin: " + std::to_string(pin) +
+                             ", type: " + (isnormal() ? "normal" : "inverted"));
         }
 
-        bool set()
+        bool set() const
         {
-            struct gpiohandle_data data;
-            data.values[0] = 1;
-            if (ioctl(fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data) != 0)
-                throw std::runtime_error(
-                    "Cannot set output pin " + std::to_string(pin) +
-                    " due to ioctl error: " + strerror(errno));
+            write(high);
             handler->log(logs::level::debug,
-                         "Pin[" + std::to_string(pin) + "] set");
+                         "Pin[" + std::to_string(pin) + "] set high");
             return true;
         }
 
-        bool clear()
+        bool clear() const
         {
-            struct gpiohandle_data data;
-            data.values[0] = 0;
-            if (ioctl(fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data) != 0)
-                throw std::runtime_error(
-                    "Cannot set output pin " + std::to_string(pin) +
-                    " due to ioctl error: " + strerror(errno));
+            write(low);
             handler->log(logs::level::debug,
-                         "Pin[" + std::to_string(pin) + "] cleared");
+                         "Pin[" + std::to_string(pin) + "] set low");
             return true;
         }
 
-        bool toggle()
+        bool toggle() const
         {
-            struct gpiohandle_data data;
-            if (ioctl(fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &data) != 0)
-                throw std::runtime_error(
-                    "Cannot set output pin " + std::to_string(pin) +
-                    " due to ioctl error: " + strerror(errno));
-
-            data.values[0] ? clear() : set();
+            write(!read());
             handler->log(logs::level::debug,
                          "Pin[" + std::to_string(pin) + "] toggled");
             return true;
@@ -386,6 +369,8 @@ struct Gpio::Handler
 
       private:
         const Gpio::Handler* handler;
+        const uint8_t low;
+        const uint8_t high;
         const int32_t pin;
         int32_t fd;
 
@@ -396,7 +381,7 @@ struct Gpio::Handler
             req.flags =
                 GPIOHANDLE_REQUEST_OUTPUT | GPIOHANDLE_REQUEST_BIAS_PULL_DOWN;
             req.lines = 1;
-            req.default_values[0] = 0;
+            req.default_values[0] = low;
             strcpy(req.consumer_label, "rpi_output");
 
             auto ifs = fopen(handler->gpiochippath.c_str(), "r");
@@ -429,7 +414,42 @@ struct Gpio::Handler
         bool deinitialize()
         {
             clear();
+            close(fd);
             return true;
+        }
+
+        bool write(uint8_t val) const
+        {
+            struct gpiohandle_data data;
+            data.values[0] = val;
+            if (ioctl(fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data) != 0)
+                throw std::runtime_error(
+                    "Cannot set output pin " + std::to_string(pin) +
+                    " due to ioctl error: " + strerror(errno));
+            handler->log(logs::level::debug,
+                         "Pin[" + std::to_string(pin) +
+                             "] written to: " + std::to_string(val));
+            return true;
+        }
+
+        uint8_t read() const
+        {
+            struct gpiohandle_data data;
+            if (ioctl(fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &data) != 0)
+                throw std::runtime_error(
+                    "Cannot set output pin " + std::to_string(pin) +
+                    " due to ioctl error: " + strerror(errno));
+            return data.values[0];
+        }
+
+        bool isnormal() const
+        {
+            return handler->mode == modetype::output_normal;
+        }
+
+        bool isinverted() const
+        {
+            return handler->mode == modetype::output_inverted;
         }
     };
     std::unordered_map<int32_t, InputPin> inputs;
