@@ -45,7 +45,7 @@ struct Gpio::Handler
                             std::ranges::for_each(inputs, [this](auto& pin) {
                                 pin.second.monitor();
                             });
-                            usleep(10 * 1000);
+                            usleep((uint32_t)monitorinterval.count());
                         }
                     }
                     catch (const std::exception& ex)
@@ -87,7 +87,7 @@ struct Gpio::Handler
         }
     }
 
-    bool read(int32_t pin, std::shared_ptr<Observer<GpioData>> obs)
+    bool observe(int32_t pin, std::shared_ptr<Observer<GpioData>> obs)
     {
         if (inputs.contains(pin))
         {
@@ -101,7 +101,7 @@ struct Gpio::Handler
         return false;
     }
 
-    bool unread(int32_t pin, std::shared_ptr<Observer<GpioData>> obs)
+    bool unobserve(int32_t pin, std::shared_ptr<Observer<GpioData>> obs)
     {
         if (inputs.contains(pin))
         {
@@ -110,6 +110,17 @@ struct Gpio::Handler
             log(logs::level::debug, "Removing observer "s + oss.str() +
                                         " for pin " + std::to_string(pin));
             inputs.at(pin).unsubscribe(obs);
+            return true;
+        }
+        return false;
+    }
+
+    bool read(int32_t pin, uint8_t& val)
+    {
+        if (inputs.contains(pin))
+        {
+            auto& in{inputs.at(pin)};
+            val = in.read();
             return true;
         }
         return false;
@@ -156,33 +167,36 @@ struct Gpio::Handler
 
         bool monitor()
         {
-            if (switchingnum > 0)
+            if (getpendingevent() == expectedevent)
             {
-                if (getdelay(switchedlast) < bouncedelay)
-                {
-                    while (getpendingevent())
-                        ;
-                    return true;
-                }
-                if (getdelay(switchedlast) >= signaldelay)
-                    return notify();
+                if (getdelay(switchedlast) >= bouncedelay)
+                    return handleevent();
             }
-
-            if (getpendingevent() == GPIOEVENT_EVENT_FALLING_EDGE)
+            else
             {
-                switchedlast = getcurrent();
-                switchingnum++;
+                if (isnotifyneeded() && getdelay(switchedlast) >= notifydelay)
+                    return notifyclients();
             }
+            return false;
+        }
 
-            return true;
+        uint8_t read() const
+        {
+            struct gpiohandle_data data;
+            if (ioctl(fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &data) != 0)
+                throw std::runtime_error(
+                    "Cannot get input pin " + std::to_string(pin) +
+                    " due to ioctl error: " + strerror(errno));
+            return data.values[0];
         }
 
       private:
         const Gpio::Handler* handler;
         const int32_t pin;
-        const std::chrono::milliseconds signaldelay{500ms};
+        const std::chrono::milliseconds notifydelay{500ms};
         const std::chrono::milliseconds bouncedelay{200ms};
-        int32_t switchingnum{};
+        const int32_t expectedevent{GPIOEVENT_REQUEST_FALLING_EDGE};
+        uint32_t switchednum{};
         std::chrono::steady_clock::time_point switchedlast{};
         int32_t fd;
 
@@ -234,7 +248,13 @@ struct Gpio::Handler
 
         int32_t getpendingevent() const
         {
-            return waitforevent(0);
+            int32_t lastevent{};
+            while (true)
+                if (auto ret = waitforevent(0); ret > 0)
+                    lastevent = ret;
+                else
+                    break;
+            return lastevent;
         }
 
         int32_t waitforevent(int32_t delayms) const
@@ -292,20 +312,38 @@ struct Gpio::Handler
             return 0;
         }
 
-        bool notify()
+        bool handleevent()
         {
-            if (Observable<GpioData>::notify({pin, switchingnum}))
+            switchedlast = getcurrent();
+            switchednum++;
+            return true;
+        }
+
+        bool resetevent()
+        {
+            switchednum = 0;
+            return true;
+        }
+
+        bool isnotifyneeded() const
+        {
+            return switchednum;
+        }
+
+        bool notifyclients()
+        {
+            bool ret{};
+            if ((ret = notify({pin, switchednum})))
                 handler->log(logs::level::debug,
                              "Pin[" + std::to_string(pin) +
                                  "] clients notified, events num: " +
-                                 std::to_string(switchingnum));
+                                 std::to_string(switchednum));
             else
                 handler->log(logs::level::warning,
                              "Pin[" + std::to_string(pin) +
                                  "] cannot notify clients, events num: " +
-                                 std::to_string(switchingnum));
-            switchingnum = 0;
-            return true;
+                                 std::to_string(switchednum));
+            return ret & resetevent();
         }
 
         std::chrono::milliseconds
@@ -437,7 +475,7 @@ struct Gpio::Handler
             struct gpiohandle_data data;
             if (ioctl(fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &data) != 0)
                 throw std::runtime_error(
-                    "Cannot set output pin " + std::to_string(pin) +
+                    "Cannot get output pin " + std::to_string(pin) +
                     " due to ioctl error: " + strerror(errno));
             return data.values[0];
         }
@@ -456,6 +494,7 @@ struct Gpio::Handler
     std::unordered_map<int32_t, OutputPin> outputs;
     std::future<void> async;
     std::stop_source running;
+    const std::chrono::microseconds monitorinterval{100ms};
 
     void log(
         logs::level level, const std::string& msg,
@@ -478,14 +517,19 @@ Gpio::Gpio(const config_t& config) : handler{std::make_unique<Handler>(config)}
 {}
 Gpio::~Gpio() = default;
 
-bool Gpio::read(int32_t pin, std::shared_ptr<Observer<GpioData>> obs)
+bool Gpio::observe(int32_t pin, std::shared_ptr<Observer<GpioData>> obs)
 {
-    return handler->read(pin, obs);
+    return handler->observe(pin, obs);
 }
 
-bool Gpio::unread(int32_t pin, std::shared_ptr<Observer<GpioData>> obs)
+bool Gpio::unobserve(int32_t pin, std::shared_ptr<Observer<GpioData>> obs)
 {
-    return handler->unread(pin, obs);
+    return handler->unobserve(pin, obs);
+}
+
+bool Gpio::read(int32_t pin, uint8_t& val)
+{
+    return handler->read(pin, val);
 }
 
 bool Gpio::write(int32_t pin, uint8_t val)
