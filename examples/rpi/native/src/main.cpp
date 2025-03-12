@@ -1,4 +1,7 @@
 #include "gpio/interfaces/rpi/native/gpio.hpp"
+#include "logs/interfaces/console/logs.hpp"
+#include "logs/interfaces/group/logs.hpp"
+#include "logs/interfaces/storage/logs.hpp"
 
 #include <algorithm>
 #include <iomanip>
@@ -15,8 +18,17 @@ int main(int argc, char** argv)
             auto loglvl =
                 (bool)atoi(argv[1]) ? logs::level::debug : logs::level::info;
 
+            auto logconsole = logs::Factory::create<logs::console::Log,
+                                                    logs::console::config_t>(
+                {loglvl, logs::tags::hide});
+            auto logstorage = logs::Factory::create<logs::storage::Log,
+                                                    logs::storage::config_t>(
+                {loglvl, logs::tags::show, {}});
+            auto logif =
+                logs::Factory::create<logs::group::Log, logs::group::config_t>(
+                    {logconsole, logstorage});
+
             using namespace gpio::rpi::native;
-            auto logif = logs::Factory::create<logs::console::Log>(loglvl);
             {
                 std::cout
                     << "First scenario -> testing read gpio input operation\n";

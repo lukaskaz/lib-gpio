@@ -3,7 +3,7 @@
 #include "gpio/factory.hpp"
 #include "gpio/helpers.hpp"
 #include "gpio/interfaces/gpio.hpp"
-#include "logs/interfaces/console/logs.hpp"
+#include "logs/interfaces/logs.hpp"
 
 #include <cstdint>
 #include <tuple>
