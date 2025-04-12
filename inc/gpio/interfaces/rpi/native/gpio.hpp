@@ -27,8 +27,10 @@ class Gpio : public GpioIf
 {
   public:
     ~Gpio();
-    bool observe(int32_t, std::shared_ptr<Observer<GpioData>>) override;
-    bool unobserve(int32_t, std::shared_ptr<Observer<GpioData>>) override;
+    bool observe(int32_t,
+                 std::shared_ptr<gpio::helpers::Observer<GpioData>>) override;
+    bool unobserve(int32_t,
+                   std::shared_ptr<gpio::helpers::Observer<GpioData>>) override;
     bool read(int32_t, uint8_t&) override;
     bool write(int32_t, uint8_t) override;
     bool toggle(int32_t) override;

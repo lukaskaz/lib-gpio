@@ -14,8 +14,12 @@ class GpioIf
 {
   public:
     virtual ~GpioIf() = default;
-    virtual bool observe(int32_t, std::shared_ptr<Observer<GpioData>>) = 0;
-    virtual bool unobserve(int32_t, std::shared_ptr<Observer<GpioData>>) = 0;
+    virtual bool
+        observe(int32_t,
+                std::shared_ptr<gpio::helpers::Observer<GpioData>>) = 0;
+    virtual bool
+        unobserve(int32_t,
+                  std::shared_ptr<gpio::helpers::Observer<GpioData>>) = 0;
     virtual bool read(int32_t, uint8_t&) = 0;
     virtual bool write(int32_t, uint8_t) = 0;
     virtual bool toggle(int32_t) = 0;
