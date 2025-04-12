@@ -6,6 +6,9 @@
 #include <stdexcept>
 #include <unordered_set>
 
+namespace gpio::helpers
+{
+
 template <typename T>
 class Observer
 {
@@ -63,3 +66,5 @@ class Observable
   private:
     std::unordered_set<std::shared_ptr<Observer<T>>> observers;
 };
+
+} // namespace gpio::helpers

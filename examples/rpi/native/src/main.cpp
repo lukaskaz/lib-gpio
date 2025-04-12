@@ -20,10 +20,10 @@ int main(int argc, char** argv)
 
             auto logconsole = logs::Factory::create<logs::console::Log,
                                                     logs::console::config_t>(
-                {loglvl, logs::tags::hide});
+                {loglvl, logs::time::hide, logs::tags::hide});
             auto logstorage = logs::Factory::create<logs::storage::Log,
                                                     logs::storage::config_t>(
-                {loglvl, logs::tags::show, {}});
+                {loglvl, logs::time::show, logs::tags::show, {}});
             auto logif =
                 logs::Factory::create<logs::group::Log, logs::group::config_t>(
                     {logconsole, logstorage});
@@ -67,12 +67,13 @@ int main(int argc, char** argv)
                 auto ifaceread = gpio::Factory::create<Gpio, config_t>(
                     {modetype::input, {16, 21}, logif});
 
-                auto readingfunc = Observer<gpio::GpioData>::create(
-                    [](const gpio::GpioData& data) {
-                        std::cout << "Pin: " << std::get<0>(data)
-                                  << ", val: " << std::get<1>(data)
-                                  << std::endl;
-                    });
+                auto readingfunc =
+                    gpio::helpers::Observer<gpio::GpioData>::create(
+                        [](const gpio::GpioData& data) {
+                            std::cout << "Pin: " << std::get<0>(data)
+                                      << ", val: " << std::get<1>(data)
+                                      << std::endl;
+                        });
                 ifaceread->observe(16, readingfunc);
                 ifaceread->observe(21, readingfunc);
                 std::cout << "Press pins, when done press [enter]"

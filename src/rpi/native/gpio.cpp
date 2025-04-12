@@ -21,6 +21,7 @@ namespace gpio::rpi::native
 
 using namespace std::chrono_literals;
 using namespace std::string_literals;
+using namespace gpio::helpers;
 
 struct Gpio::Handler
 {
@@ -363,10 +364,9 @@ struct Gpio::Handler
     {
       public:
         OutputPin(Gpio::Handler* handler, int32_t pin) :
-            handler{handler}, low{[this] {
-                return (uint8_t)(isnormal() ? 0 : 1);
-            }()},
-            high{!low}, pin{pin}
+            handler{handler},
+            low{[this] { return (uint8_t)(isnormal() ? 0 : 1); }()}, high{!low},
+            pin{pin}
         {
             initialize();
             handler->log(logs::level::info,
