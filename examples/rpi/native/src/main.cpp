@@ -33,10 +33,19 @@ int main(int argc, char** argv)
                 std::cout
                     << "First scenario -> testing read gpio input operation\n";
                 auto ifaceread = gpio::Factory::create<Gpio, config_t>(
-                    {modetype::input, {21}, logif});
+                    {modetype::input, {16, 21}, logif});
 
                 std::cout << "Reading first input pin, press switch\n";
                 uint8_t state{};
+                while (ifaceread->read(16, state))
+                {
+                    if (state)
+                    {
+                        std::cout << "First switch pressed\n";
+                        break;
+                    }
+                    usleep(100 * 1000);
+                }
                 std::cout << "Reading second input pin, press switch\n";
                 while (ifaceread->read(21, state))
                 {
@@ -56,7 +65,7 @@ int main(int argc, char** argv)
                 std::cout << "Second scenario -> testing observe gpio input "
                              "operation\n";
                 auto ifaceread = gpio::Factory::create<Gpio, config_t>(
-                    {modetype::input, {21}, logif});
+                    {modetype::input, {16, 21}, logif});
 
                 auto readingfunc =
                     gpio::helpers::Observer<gpio::GpioData>::create(
@@ -65,7 +74,7 @@ int main(int argc, char** argv)
                                       << ", val: " << std::get<1>(data)
                                       << std::endl;
                         });
-                // ifaceread->observe(16, readingfunc);
+                ifaceread->observe(16, readingfunc);
                 ifaceread->observe(21, readingfunc);
                 std::cout << "Press pins, when done press [enter]"
                           << std::flush;
