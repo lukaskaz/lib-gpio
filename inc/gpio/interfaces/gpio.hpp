@@ -8,7 +8,7 @@
 namespace gpio
 {
 
-using GpioData = std::pair<int32_t, int32_t>;
+using GpioData = std::tuple<int32_t, int32_t, int32_t>;
 
 class GpioIf
 {

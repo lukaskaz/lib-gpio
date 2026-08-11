@@ -168,17 +168,25 @@ struct Gpio::Handler
 
         bool monitor()
         {
-            if (getpendingevent() == expectedevent)
+            bool ret{};
+            switch (getpendingevent())
             {
-                if (getdelay(switchedlast) >= bouncedelay)
-                    return handleevent();
+                case Event::none:
+                    if (isnotifyneeded() &&
+                        getdelay(switchedlast) >= notifydelay)
+                        ret = notifyclients();
+                    else
+                        usleep((uint32_t)monitorinterval.count());
+                    break;
+                case Event::pressed:
+                    switchedlast = getcurrent();
+                    break;
+                case Event::released:
+                    ret = handleevent(getdelay(switchedlast) >= longpressdelay);
+                    switchedlast = getcurrent();
+                    break;
             }
-            else
-            {
-                if (isnotifyneeded() && getdelay(switchedlast) >= notifydelay)
-                    return notifyclients();
-            }
-            return false;
+            return ret;
         }
 
         uint8_t read() const
@@ -192,11 +200,19 @@ struct Gpio::Handler
         }
 
       private:
+        enum class Event
+        {
+            none = 0,
+            pressed = GPIOEVENT_EVENT_RISING_EDGE,
+            released = GPIOEVENT_REQUEST_FALLING_EDGE
+        };
         const Gpio::Handler* handler;
         const int32_t pin;
         const std::chrono::milliseconds notifydelay{500ms};
-        const std::chrono::milliseconds bouncedelay{200ms};
-        const int32_t expectedevent{GPIOEVENT_REQUEST_FALLING_EDGE};
+        // const std::chrono::milliseconds bouncedelay{200ms};
+        const std::chrono::milliseconds longpressdelay{1s};
+        const std::chrono::microseconds monitorinterval{10ms};
+        uint32_t longpressnum{};
         uint32_t switchednum{};
         std::chrono::steady_clock::time_point switchedlast{};
         int32_t fd;
@@ -206,10 +222,10 @@ struct Gpio::Handler
             struct gpioevent_request req;
             req.lineoffset = pin;
             req.handleflags = GPIOHANDLE_REQUEST_INPUT;
-            // req.eventflags = GPIOEVENT_REQUEST_BOTH_EDGES;
+            req.eventflags = GPIOEVENT_REQUEST_BOTH_EDGES;
             // req.eventflags = GPIOEVENT_REQUEST_RISING_EDGE;
             // req.eventflags = GPIOEVENT_REQUEST_FALLING_EDGE;
-            req.eventflags = GPIOEVENT_REQUEST_FALLING_EDGE;
+            // req.eventflags = GPIOEVENT_REQUEST_FALLING_EDGE;
             req.handleflags =
                 GPIOHANDLE_REQUEST_INPUT | GPIOHANDLE_REQUEST_BIAS_PULL_DOWN;
             strcpy(req.consumer_label, "rpi_input");
@@ -247,14 +263,16 @@ struct Gpio::Handler
             return true;
         }
 
-        int32_t getpendingevent() const
+        Event getpendingevent() const
         {
-            int32_t lastevent{};
+            auto lastevent{Event::none};
             while (true)
-                if (auto ret = waitforevent(0); ret > 0)
+            {
+                if (auto ret = (Event)waitforevent(0); ret != Event::none)
                     lastevent = ret;
                 else
                     break;
+            }
             return lastevent;
         }
 
@@ -313,37 +331,39 @@ struct Gpio::Handler
             return 0;
         }
 
-        bool handleevent()
+        bool handleevent(bool longpress)
         {
-            switchedlast = getcurrent();
-            switchednum++;
+            longpress ? longpressnum++ : switchednum++;
             return true;
         }
 
         bool resetevent()
         {
             switchednum = 0;
+            longpressnum = 0;
             return true;
         }
 
         bool isnotifyneeded() const
         {
-            return switchednum;
+            return switchednum || longpressnum;
         }
 
         bool notifyclients()
         {
             bool ret{};
-            if ((ret = notify({pin, switchednum})))
+            if ((ret = notify({pin, switchednum, longpressnum})))
                 handler->log(logs::level::debug,
                              "Pin[" + std::to_string(pin) +
                                  "] clients notified, events num: " +
-                                 std::to_string(switchednum));
+                                 std::to_string(switchednum) + "/" +
+                                 std::to_string(longpressnum));
             else
                 handler->log(logs::level::warning,
                              "Pin[" + std::to_string(pin) +
                                  "] cannot notify clients, events num: " +
-                                 std::to_string(switchednum));
+                                 std::to_string(switchednum) + "/" +
+                                 std::to_string(longpressnum));
             return ret & resetevent();
         }
 
