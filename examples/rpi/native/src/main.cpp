@@ -1,4 +1,5 @@
 #include "gpio/interfaces/rpi/native/gpio.hpp"
+#include "gpio/interfaces/rpi/native/switch.hpp"
 #include "logs/interfaces/console/logs.hpp"
 #include "logs/interfaces/group/logs.hpp"
 #include "logs/interfaces/storage/logs.hpp"
@@ -71,8 +72,8 @@ int main(int argc, char** argv)
                     gpio::helpers::Observer<gpio::GpioData>::create(
                         [](const gpio::GpioData& data) {
                             std::cout << "Pin: " << std::get<0>(data)
-                                      << ", short press: " << std::get<1>(data)
-                                      << ", long press: " << std::get<2>(data)
+                                      << ", rising: " << std::get<1>(data)
+                                      << ", falling: " << std::get<2>(data)
                                       << std::endl;
                         });
                 ifaceread->observe(16, readingfunc);
@@ -85,7 +86,32 @@ int main(int argc, char** argv)
             }
 
             {
-                std::cout << "Third scenario -> testing gpio normal output "
+                std::cout << "Third scenario -> testing observe switches "
+                             "operation\n";
+
+                auto ifaceread =
+                    gpio::Factory::create<switches::Switch, switches::config_t>(
+                        {switches::modetype::input, {21, 17}, logif});
+
+                auto readingfunc =
+                    gpio::helpers::Observer<gpio::GpioData>::create(
+                        [](const gpio::GpioData& data) {
+                            std::cout << "Pin: " << std::get<0>(data)
+                                      << ", short press: " << std::get<1>(data)
+                                      << ", long press: " << std::get<2>(data)
+                                      << std::endl;
+                        });
+                ifaceread->observe(16, readingfunc);
+                ifaceread->observe(21, readingfunc);
+                std::cout << "Press switches, when done press [enter]"
+                          << std::flush;
+                getchar();
+                ifaceread->unobserve(16, readingfunc);
+                std::cout << "Third scenario DONE -> releasing switch\n";
+            }
+
+            {
+                std::cout << "Forth scenario -> testing gpio normal output "
                              "operation\n";
                 auto ifacewrite = gpio::Factory::create<Gpio, config_t>(
                     {modetype::output_normal, {17, 22}, logif});
@@ -107,11 +133,11 @@ int main(int argc, char** argv)
                 std::cout << "Press [enter]" << std::flush;
                 getchar();
 
-                std::cout << "Third scenario DONE -> releasing gpio\n";
+                std::cout << "Forth scenario DONE -> releasing gpio\n";
             }
 
             {
-                std::cout << "Forth scenario -> testing gpio inverted output "
+                std::cout << "Fifth scenario -> testing gpio inverted output "
                              "operation\n";
                 auto ifacewrite = gpio::Factory::create<Gpio, config_t>(
                     {modetype::output_inverted, {17, 22}, logif});
@@ -133,7 +159,7 @@ int main(int argc, char** argv)
                 std::cout << "Press [enter]" << std::flush;
                 getchar();
 
-                std::cout << "Forth scenario DONE -> releasing gpio\n";
+                std::cout << "Fifth scenario DONE -> releasing gpio\n";
             }
         }
     }
