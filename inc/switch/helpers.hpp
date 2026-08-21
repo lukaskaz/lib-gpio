@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <unordered_set>
 
-namespace gpio::helpers
+namespace switcher::helpers
 {
 
 template <typename T>
@@ -73,4 +73,4 @@ class Observable
     std::unordered_set<std::shared_ptr<Observer<T>>> observers;
 };
 
-} // namespace gpio::helpers
+} // namespace switcher::helpers

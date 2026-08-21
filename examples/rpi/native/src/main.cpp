@@ -1,8 +1,8 @@
-#include "gpio/interfaces/rpi/native/gpio.hpp"
-#include "gpio/interfaces/rpi/native/switch.hpp"
+#include "gpio/rpi/native/gpio.hpp"
 #include "logs/interfaces/console/logs.hpp"
 #include "logs/interfaces/group/logs.hpp"
 #include "logs/interfaces/storage/logs.hpp"
+#include "switch/rpi/basic/switch.hpp"
 
 #include <algorithm>
 #include <iomanip>
@@ -18,10 +18,12 @@ int main(int argc, char** argv)
         {
             auto loglvl =
                 (bool)atoi(argv[1]) ? logs::level::debug : logs::level::info;
+            auto logtag = argc > 2 && (bool)atoi(argv[2]) ? logs::tags::show
+                                                          : logs::tags::hide;
 
             auto logconsole = logs::Factory::create<logs::console::Log,
                                                     logs::console::config_t>(
-                {loglvl, logs::time::hide, logs::tags::hide});
+                {loglvl, logs::time::hide, logtag});
             auto logstorage = logs::Factory::create<logs::storage::Log,
                                                     logs::storage::config_t>(
                 {loglvl, logs::time::show, logs::tags::show, {}});
@@ -82,6 +84,7 @@ int main(int argc, char** argv)
                           << std::flush;
                 getchar();
                 ifaceread->unobserve(16, readingfunc);
+                ifaceread->unobserve(21, readingfunc);
                 std::cout << "Second scenario DONE -> releasing gpio\n";
             }
 
@@ -89,24 +92,25 @@ int main(int argc, char** argv)
                 std::cout << "Third scenario -> testing observe switches "
                              "operation\n";
 
-                auto ifaceread =
-                    gpio::Factory::create<switches::Switch, switches::config_t>(
-                        {switches::modetype::input, {21, 17}, logif});
+                using namespace switcher::rpi;
+                auto iface =
+                    switcher::Factory::create<basic::Switch, basic::config_t>(
+                        {basic::modetype::highwhenpressed, {21, 17}, logif});
 
                 auto readingfunc =
-                    gpio::helpers::Observer<gpio::GpioData>::create(
-                        [](const gpio::GpioData& data) {
-                            std::cout << "Pin: " << std::get<0>(data)
+                    switcher::helpers::Observer<switcher::SwitchData>::create(
+                        [](const switcher::SwitchData& data) {
+                            std::cout << "[OBSERVER] Pin: " << std::get<0>(data)
                                       << ", short press: " << std::get<1>(data)
                                       << ", long press: " << std::get<2>(data)
                                       << std::endl;
                         });
-                ifaceread->observe(16, readingfunc);
-                ifaceread->observe(21, readingfunc);
+                iface->observe(16, readingfunc);
+                iface->observe(21, readingfunc);
                 std::cout << "Press switches, when done press [enter]"
                           << std::flush;
                 getchar();
-                ifaceread->unobserve(16, readingfunc);
+                iface->unobserve(16, readingfunc);
                 std::cout << "Third scenario DONE -> releasing switch\n";
             }
 

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-option(ADD_EXAMPLES "Creates examples" ON)
+option(ADD_EXAMPLES "Creates examples" OFF)
 
 if(POLICY CMP0002)
     cmake_policy(SET CMP0002 OLD)

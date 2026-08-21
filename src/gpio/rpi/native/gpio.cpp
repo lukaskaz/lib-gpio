@@ -1,10 +1,10 @@
-#include "gpio/interfaces/rpi/native/gpio.hpp"
+#include "gpio/rpi/native/gpio.hpp"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/gpio.h>
-#include <poll.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/ioctl.h>
 
 #include <chrono>
@@ -21,6 +21,7 @@ namespace gpio::rpi::native
 
 using namespace std::chrono_literals;
 using namespace std::string_literals;
+using namespace gpio;
 using namespace gpio::helpers;
 
 struct Gpio::Handler
@@ -43,10 +44,14 @@ struct Gpio::Handler
                         log(logs::level::info, "Input pins monitoring started");
                         while (!running.stop_requested())
                         {
-                            std::ranges::for_each(inputs, [this](auto& pin) {
-                                pin.second.monitor();
-                            });
-                            usleep((uint32_t)monitorinterval.count());
+                            bool anyobservable{false};
+                            std::ranges::for_each(
+                                inputs, [this, &anyobservable](auto& pin) {
+                                    if (pin.second.monitor())
+                                        anyobservable = true;
+                                });
+                            if (!anyobservable)
+                                usleep((uint32_t)monitorinterval.count());
                         }
                     }
                     catch (const std::exception& ex)
@@ -168,24 +173,24 @@ struct Gpio::Handler
 
         bool monitor()
         {
-            bool ret{};
-            switch (getpendingevent())
+            if (isobserved())
             {
-                case Event::none:
-                    if (isnotifyneeded() &&
-                        getdelay(switchedlast) >= notifydelay)
-                        ret = notifyclients();
-                    break;
-                case Event::rising:
-                    risingnum++;
-                    switchedlast = getcurrent();
-                    break;
-                case Event::falling:
-                    fallingnum++;
-                    switchedlast = getcurrent();
-                    break;
+                switch (getpendingevent())
+                {
+                    case Event::none:
+                        // allow to periodically return from monitoring loop to
+                        // check for stop request
+                        return true;
+                    case Event::rising:
+                        risingnum++;
+                        break;
+                    case Event::falling:
+                        fallingnum++;
+                        break;
+                }
+                return notifyclients();
             }
-            return ret;
+            return false;
         }
 
         uint8_t read() const
@@ -207,13 +212,12 @@ struct Gpio::Handler
         };
         const Gpio::Handler* handler;
         const int32_t pin;
-        const std::chrono::milliseconds notifydelay{500ms};
+        const std::chrono::milliseconds eventtimeout{500ms};
         // const std::chrono::milliseconds bouncedelay{200ms};
         // const std::chrono::microseconds monitorinterval{10ms};
         uint32_t risingnum{};
         uint32_t fallingnum{};
-        std::chrono::steady_clock::time_point switchedlast{};
-        int32_t fd;
+        int32_t fd{-1};
 
         bool initialize()
         {
@@ -222,7 +226,6 @@ struct Gpio::Handler
             req.handleflags = GPIOHANDLE_REQUEST_INPUT;
             req.eventflags = GPIOEVENT_REQUEST_BOTH_EDGES;
             // req.eventflags = GPIOEVENT_REQUEST_RISING_EDGE;
-            // req.eventflags = GPIOEVENT_REQUEST_FALLING_EDGE;
             // req.eventflags = GPIOEVENT_REQUEST_FALLING_EDGE;
             req.handleflags =
                 GPIOHANDLE_REQUEST_INPUT | GPIOHANDLE_REQUEST_BIAS_PULL_DOWN;
@@ -263,29 +266,40 @@ struct Gpio::Handler
 
         Event getpendingevent() const
         {
-            auto event{Event::none}, validevent{Event::none};
-            while ((event = waitforevent(0)) != Event::none)
-                validevent = event;
-            return validevent;
+            return waitforevent((int32_t)eventtimeout.count());
         }
 
         Event waitforevent(int32_t delayms) const
         {
-            struct pollfd polls;
             struct gpioevent_data evdata;
+            int epfd = epoll_create1(0);
+            if (epfd < 0)
+                throw std::runtime_error("Cannot create epoll for pin " +
+                                         std::to_string(pin) + " : " +
+                                         strerror(errno));
 
-            polls.fd = fd;
-            polls.events = POLLIN | POLLERR;
-            polls.revents = 0;
+            struct epoll_event ev{};
+            ev.events = EPOLLIN | EPOLLERR | EPOLLET;
+            ev.data.fd = fd;
 
-            auto pollret = poll(&polls, 1, delayms);
-            if (pollret < 0)
+            if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev) < 0)
             {
+                close(epfd);
+                throw std::runtime_error("Cannot add fd to epoll for pin " +
+                                         std::to_string(pin) + " : " +
+                                         strerror(errno));
+            }
+
+            struct epoll_event events[1];
+            int nfds = epoll_wait(epfd, events, 1, delayms);
+            if (nfds < 0)
+            {
+                close(epfd);
                 throw std::runtime_error(
                     "Cannot monitor pin " + std::to_string(pin) +
-                    " due to poll error: " + strerror(errno));
+                    " due to epoll error: " + strerror(errno));
             }
-            else if (pollret > 0)
+            else if (nfds > 0)
             {
                 handler->log(logs::level::debug,
                              "Got interrupt from pin[" + std::to_string(pin) +
@@ -299,10 +313,13 @@ struct Gpio::Handler
                            (readsize = ::read(fd, &evdata, sizeof(evdata))) < 0)
                         ;
                     if (!readretry)
+                    {
+                        close(epfd);
                         throw std::runtime_error(
                             "Cannot monitor pin " + std::to_string(pin) +
                             " due to read error (" + std::to_string(readsize) +
                             "): " + strerror(errno));
+                    }
                 }
                 handler->log(
                     logs::level::debug,
@@ -314,13 +331,11 @@ struct Gpio::Handler
                     handler->log(logs::level::debug,
                                  "Read for pin[" + std::to_string(pin) +
                                      "] id: " + std::to_string(evdata.id));
+                    close(epfd);
                     return (Event)evdata.id;
                 }
             }
-            else
-            {
-                // pollret == 0, no event detected
-            }
+            close(epfd);
             return Event::none;
         }
 
