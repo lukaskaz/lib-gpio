@@ -7,6 +7,7 @@
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <functional>
@@ -34,28 +35,27 @@ struct Switch::Handler
         std::ranges::for_each(
             pins, [this](auto pin) { switches.try_emplace(pin, this, pin); });
 
-        useasync([this, running = running.get_token()]() {
-            try
-            {
-                log(logs::level::info, "Switches monitoring started");
-                while (!running.stop_requested())
-                {
-                    bool anyobservable{false};
-                    std::ranges::for_each(switches,
-                                          [this, &anyobservable](auto& sw) {
-                                              if (sw.second.monitor())
-                                                  anyobservable = true;
-                                          });
-                    if (!anyobservable)
-                        std::this_thread::sleep_for(monitorinterval);
-                }
-            }
-            catch (const std::exception& ex)
-            {
-                log(logs::level::error, ex.what());
-                throw;
-            }
-        });
+        try
+        {
+            std::ranges::for_each(switches, [this](auto& sw) {
+                sw.second.useasync([this, &sw,
+                                    running = running.get_token()]() {
+                    log(logs::level::info,
+                        "Switch monitoring started for pin: " +
+                            std::to_string(sw.first));
+                    while (!running.stop_requested())
+                        if (!sw.second.monitor())
+                            std::this_thread::sleep_for(monitorinterval);
+                    log(logs::level::info, "Switch monitoring ended for pin: " +
+                                               std::to_string(sw.first));
+                });
+            });
+        }
+        catch (const std::exception& ex)
+        {
+            log(logs::level::error, ex.what());
+            throw;
+        }
     }
 
     ~Handler()
@@ -167,6 +167,14 @@ struct Switch::Handler
                     " due to ioctl error: " + strerror(errno));
             return data.values[0];
         }
+
+        bool useasync(std::function<void()>&& func)
+        {
+            if (async.valid())
+                async.wait();
+            async = std::async(std::launch::async, std::move(func));
+            return true;
+        };
 
       private:
         enum class Event
@@ -293,7 +301,7 @@ struct Switch::Handler
         const Switch::Handler* handler;
         const int32_t switchpin;
         const std::chrono::milliseconds notifydelay{700ms};
-        const std::chrono::milliseconds bouncedelay{50ms};
+        const std::chrono::milliseconds debouncedelay{50ms};
         const std::chrono::milliseconds longpressdelay{1s};
         const std::chrono::milliseconds eventtimeout{100ms};
         uint32_t longpressnum{};
@@ -303,6 +311,7 @@ struct Switch::Handler
         std::unique_ptr<SwitchStateIf> state{std::make_unique<ReleasedState>(
             this, EventData{Event::none, GPIOEVENT_REQUEST_BOTH_EDGES})};
         bool isreadytonotify{false};
+        std::future<void> async;
 
         bool initialize()
         {
@@ -364,7 +373,7 @@ struct Switch::Handler
         {
             EventData temp{}, recent{};
             recent = waitforevent((int32_t)eventtimeout.count());
-            std::this_thread::sleep_for(bouncedelay);
+            std::this_thread::sleep_for(debouncedelay);
             while (std::get<Event>(temp = waitforevent(0)) != Event::none)
                 recent = temp;
             return recent;
@@ -505,7 +514,6 @@ struct Switch::Handler
     };
 
     std::unordered_map<int32_t, SwitchInput> switches;
-    std::future<void> async;
     std::stop_source running;
     const std::chrono::microseconds monitorinterval{100ms};
 
@@ -516,14 +524,6 @@ struct Switch::Handler
         if (logif)
             logif->log(level, std::string{loc.function_name()}, msg);
     }
-
-    bool useasync(std::function<void()>&& func)
-    {
-        if (async.valid())
-            async.wait();
-        async = std::async(std::launch::async, std::move(func));
-        return true;
-    };
 };
 
 Switch::Switch(const config_t& config) :

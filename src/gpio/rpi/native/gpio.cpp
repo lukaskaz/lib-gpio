@@ -7,6 +7,7 @@
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <functional>
@@ -38,28 +39,28 @@ struct Gpio::Handler
                     inputs.try_emplace(pin, this, pin);
                 });
 
-                useasync([this, running = running.get_token()]() {
-                    try
-                    {
-                        log(logs::level::info, "Input pins monitoring started");
-                        while (!running.stop_requested())
-                        {
-                            bool anyobservable{false};
-                            std::ranges::for_each(
-                                inputs, [this, &anyobservable](auto& pin) {
-                                    if (pin.second.monitor())
-                                        anyobservable = true;
-                                });
-                            if (!anyobservable)
-                                usleep((uint32_t)monitorinterval.count());
-                        }
-                    }
-                    catch (const std::exception& ex)
-                    {
-                        log(logs::level::error, ex.what());
-                        throw;
-                    }
-                });
+                try
+                {
+                    std::ranges::for_each(inputs, [this](auto& pin) {
+                        pin.second.useasync([this, &pin,
+                                             running = running.get_token()]() {
+                            log(logs::level::info,
+                                "Input monitoring started for pin: " +
+                                    std::to_string(pin.first));
+                            while (!running.stop_requested())
+                                if (!pin.second.monitor())
+                                    usleep((uint32_t)monitorinterval.count());
+                            log(logs::level::info,
+                                "Input monitoring ended for pin: " +
+                                    std::to_string(pin.first));
+                        });
+                    });
+                }
+                catch (const std::exception& ex)
+                {
+                    log(logs::level::error, ex.what());
+                    throw;
+                }
                 break;
             case modetype::output_normal:
                 [[fallthrough]];
@@ -203,6 +204,14 @@ struct Gpio::Handler
             return data.values[0];
         }
 
+        bool useasync(std::function<void()>&& func)
+        {
+            if (async.valid())
+                async.wait();
+            async = std::async(std::launch::async, std::move(func));
+            return true;
+        };
+
       private:
         enum class Event
         {
@@ -218,6 +227,7 @@ struct Gpio::Handler
         uint32_t risingnum{};
         uint32_t fallingnum{};
         int32_t fd{-1};
+        std::future<void> async;
 
         bool initialize()
         {
@@ -514,7 +524,6 @@ struct Gpio::Handler
     };
     std::unordered_map<int32_t, InputPin> inputs;
     std::unordered_map<int32_t, OutputPin> outputs;
-    std::future<void> async;
     std::stop_source running;
     const std::chrono::microseconds monitorinterval{100ms};
 
@@ -525,14 +534,6 @@ struct Gpio::Handler
         if (logif)
             logif->log(level, std::string{loc.function_name()}, msg);
     }
-
-    bool useasync(std::function<void()>&& func)
-    {
-        if (async.valid())
-            async.wait();
-        async = std::async(std::launch::async, std::move(func));
-        return true;
-    };
 };
 
 Gpio::Gpio(const config_t& config) : handler{std::make_unique<Handler>(config)}
